@@ -18,6 +18,14 @@
             <Canvas x:Name="Origin" Height="225" Background="LightBlue"/>
             <Canvas x:Name="target" Height="225" Background="LightCyan"/>
         </StackPanel>
+        <!--<Grid Grid.Column="0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>-->
+            <!--<Canvas Grid.Row="0" x:Name="Origin" Background="LightBlue"/>
+            <Canvas Grid.Row="1" x:Name="target" Background="LightCyan"/>
+        </Grid>-->
 
         <StackPanel Grid.Column="1" Orientation="Vertical" Background="PapayaWhip">
             <Button Content="Upload" Width="80" Height="40" Click="Upload_Button_Click"/>
@@ -46,7 +54,44 @@
 
         </StackPanel>
 
-        
+        <StackPanel Grid.Column="3" Orientation="Vertical" Background="PapayaWhip">
+            <!--<Button Content="Origin Resolution" Width="80" Height="40"/>-->
+            <Slider  x:Name="LevelsSlider" 
+                     Minimum="2" 
+                     Maximum="256" 
+                     TickFrequency="1" 
+                     IsSnapToTickEnabled="True"
+                     ValueChanged="LevelsSlider_ValueChanged">
+                
+            </Slider>
+            <TextBlock x:Name="LevelsTextBlock" Text="{Binding ElementName=LevelsSlider, Path=Value}" Margin="5" TextAlignment="Center"/>
+            <Button Content="Uniform" Width="80" Height="40" Click="Uniform_Button_Click"/>
+            <ComboBox x:Name="FilterSelectionComboBox" SelectionChanged="FilterSelectionComboBox_SelectionChanged">
+                <ComboBoxItem Content="Floyd" IsSelected="True"/>
+                <ComboBoxItem Content="Burkes"/>
+                <ComboBoxItem Content="Stucky"/>
+                <ComboBoxItem Content="Sierra"/>
+                <ComboBoxItem Content="Atkinson"/>
+            </ComboBox>
+            <ComboBox x:Name="KValueComboBox" SelectionChanged="KValueComboBox_SelectionChanged">
+                <ComboBoxItem Content="2" IsSelected="True"/>
+                <ComboBoxItem Content="3"/>
+                <ComboBoxItem Content="4"/>
+            </ComboBox>
+           
+            <Button Content="Apply Dithering" Width="80" Height="40" Click="Dithering_Button_Click" />
+            
+            <Slider x:Name="ColorsSlider" 
+        Minimum="2" 
+        Maximum="256" 
+        TickFrequency="1" 
+        IsSnapToTickEnabled="True"
+        ValueChanged="ColorsSlider_ValueChanged">
+            </Slider>
+            <TextBlock x:Name="ColorsTextBlock" Text="{Binding ElementName=ColorsSlider, Path=Value}" Margin="5" TextAlignment="Center"/>
+            <Button Content="N colors" Width="80" Height="40" Click="ApplyDitheringButton_Click" />
+
+        </StackPanel>
         
     </Grid>
 </Window>

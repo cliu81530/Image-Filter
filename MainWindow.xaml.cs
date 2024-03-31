@@ -15,6 +15,13 @@ using System.Windows.Shapes;
 using Microsoft.Win32;
 using System.IO;
 
+
+//using Accord.Imaging;
+//using System.Drawing;
+//using System.Drawing.Imaging;
+//using System.Windows.Media.Imaging;
+//using Color = System.Drawing.Color;
+
 namespace WpfApp1
 {
     /// <summary>
@@ -1019,5 +1026,580 @@ namespace WpfApp1
                     }
                 }
         }
+
+        private void Uniform_Button_Click(object sender, RoutedEventArgs e)
+        {
+            if(target.Children.Count > 0 && target.Children[0] is Image)
+            {
+                Image uniformQuantization = target.Children[0] as Image;
+
+                if (uniformQuantization?.Source is BitmapSource originalSource)
+                {
+
+                    int levelsPerChannel = (int)LevelsSlider.Value;
+                    // Ensuring the image is in a suitable format for quantization
+                    FormatConvertedBitmap formatConvertedBitmap = new FormatConvertedBitmap(originalSource, PixelFormats.Bgra32, null, 0);
+
+                    // Using the format-converted source for quantization
+                    uniformQuantization.Source = UniformQuantizeImage(formatConvertedBitmap, levelsPerChannel);
+                }
+            }
+        }
+
+        private WriteableBitmap UniformQuantizeImage(BitmapSource source, int levelsPerChannel)
+        {
+            var writeableBitmap = new WriteableBitmap(source);
+
+            int bytesPerPixel = (writeableBitmap.Format.BitsPerPixel + 7) / 8;
+            int stride = writeableBitmap.PixelWidth * bytesPerPixel;
+            byte[] pixelData = new byte[writeableBitmap.PixelHeight * stride];
+            writeableBitmap.CopyPixels(pixelData, stride, 0);
+
+            for (int i = 0; i < pixelData.Length; i += bytesPerPixel)
+            {
+                pixelData[i] = QuantizeByte(pixelData[i], levelsPerChannel); // B
+                pixelData[i + 1] = QuantizeByte(pixelData[i + 1], levelsPerChannel); // G
+                pixelData[i + 2] = QuantizeByte(pixelData[i + 2], levelsPerChannel); // R
+                                                                                    
+            }
+
+            writeableBitmap.WritePixels(new Int32Rect(0, 0, writeableBitmap.PixelWidth, writeableBitmap.PixelHeight), pixelData, stride, 0);
+            return writeableBitmap;
+        }
+
+        private byte QuantizeByte(byte value, int levels)
+        {
+            int max = 255;
+            int step = max / (levels - 1);
+            return (byte)(Math.Round(value / (double)step) * step);
+            //return (byte)(value < 128 ? 0 : 255);
+        }
+
+        private void LevelsSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (LevelsTextBlock != null)
+            {
+                LevelsTextBlock.Text = ((int)e.NewValue).ToString();
+            }
+        }
+
+        private void Dithering_Button_Click(object sender, RoutedEventArgs e)
+        {
+            if (target.Children.Count > 0 && target.Children[0] is Image)
+            {
+                Image DitheredImage = target.Children[0] as Image;
+                if (DitheredImage?.Source is BitmapSource originalSource)
+                {
+                    string selectedFilter = ((ComboBoxItem)FilterSelectionComboBox.SelectedItem).Content.ToString();      
+                    
+                    BitmapSource ditheredImage = ApplyErrorDiffusionDithering(originalSource, selectedFilter);
+                    DitheredImage.Source = ditheredImage;
+                }
+            }
+        }
+
+        private BitmapSource ApplyErrorDiffusionDithering(BitmapSource source, string filter)
+        {
+            // Convert source to a format that we can work with
+            var formatConvertedBitmap = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
+            int kValue = int.Parse(((ComboBoxItem)KValueComboBox.SelectedItem).Content.ToString());
+            var writeableBitmap = new WriteableBitmap(formatConvertedBitmap);
+
+            // Determine which filter to apply
+            switch (filter)
+            {
+                case "Floyd":
+                    return FloydSteinbergDithering(writeableBitmap,kValue);
+                case "Burkes":
+                    return BurkesDithering(writeableBitmap,kValue);
+                case "Stucky":
+                    return StuckiDithering(writeableBitmap, kValue);
+                case "Sierra":
+                    return SierraDithering(writeableBitmap,kValue);
+                case "Atkinson":
+                    return AtkinsonDithering(writeableBitmap,kValue);
+                default:
+                    throw new ArgumentException("Unknown filter selection.");
+            }
+        }
+
+        // Implement the individual dithering methods for each filter here...
+        private WriteableBitmap FloydSteinbergDithering(WriteableBitmap bitmap, int levels)
+        {
+            int w = bitmap.PixelWidth;
+            int h = bitmap.PixelHeight;
+            int bytesPerPixel = (bitmap.Format.BitsPerPixel + 7) / 8;
+            int stride = bitmap.BackBufferStride;
+            byte[] pixelData = new byte[h * stride];
+
+            bitmap.CopyPixels(pixelData, stride, 0);
+
+            for (int y = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    int index = y * stride + x * bytesPerPixel;
+                    byte originalValue = pixelData[index];
+                    byte quantizedValue = QuantizeByte(originalValue, levels);
+                    int error = originalValue - quantizedValue;
+
+                    pixelData[index] = quantizedValue;
+
+                    if (x + 1 < w)
+                    {
+                        pixelData[index + bytesPerPixel] = QuantizeByte((byte)Math.Min(255, pixelData[index + bytesPerPixel] + error * 7 / 16), levels);
+                    }
+
+                    if (y + 1 < h)
+                    {
+                        if (x > 0)
+                        {
+                            pixelData[index + stride - bytesPerPixel] = QuantizeByte((byte)Math.Min(255, pixelData[index + stride - bytesPerPixel] + error * 3 / 16), levels);
+                        }
+
+                        pixelData[index + stride] = QuantizeByte((byte)Math.Min(255, pixelData[index + stride] + error * 5 / 16), levels);
+
+                        if (x + 1 < w)
+                        {
+                            pixelData[index + stride + bytesPerPixel] = QuantizeByte((byte)Math.Min(255, pixelData[index + stride + bytesPerPixel] + error * 1 / 16), levels);
+                        }
+                    }
+                }
+            }
+
+            var resultBitmap = new WriteableBitmap(w, h, bitmap.DpiX, bitmap.DpiY, bitmap.Format, bitmap.Palette);
+            resultBitmap.WritePixels(new Int32Rect(0, 0, w, h), pixelData, stride, 0);
+            return resultBitmap;
+        }
+
+
+
+        private WriteableBitmap BurkesDithering(WriteableBitmap bitmap, int levels)
+        {
+            int w = bitmap.PixelWidth;
+            int h = bitmap.PixelHeight;
+            int bytesPerPixel = (bitmap.Format.BitsPerPixel + 7) / 8;
+            int stride = bitmap.BackBufferStride;
+            byte[] pixelData = new byte[h * stride];
+
+            bitmap.CopyPixels(pixelData, stride, 0);
+
+            for (int y = 0; y < h - 2; y++)
+            {
+                for (int x = 2; x < w - 2; x++)
+                {
+                    int index = y * stride + x * bytesPerPixel;
+                    byte originalPixel = pixelData[index];
+                    byte newPixel = QuantizeByte(originalPixel, levels);
+                    int error = originalPixel - newPixel;
+                    pixelData[index] = newPixel;
+
+                    // Distribute the error based on the Burkes algorithm
+                    // Current pixel is at (x, y). Errors are distributed to pixels (x+1, y), (x+2, y),
+                    // (x-2, y+1), (x-1, y+1), (x, y+1), (x+1, y+1), and (x+2, y+1).
+
+                    SpreadErrorBurkes(pixelData, stride, bytesPerPixel, x, y, w, h, error);
+                }
+            }
+
+            var resultBitmap = new WriteableBitmap(w, h, bitmap.DpiX, bitmap.DpiY, bitmap.Format, bitmap.Palette);
+            resultBitmap.WritePixels(new Int32Rect(0, 0, w, h), pixelData, stride, 0);
+            return resultBitmap;
+        }
+
+        private void SpreadErrorBurkes(byte[] pixelData, int stride, int bytesPerPixel, int x, int y, int w, int h, int error)
+        {
+            // Right
+            AddError(pixelData, x + 1, y, stride, bytesPerPixel, w, h, error * 8 / 32);
+            // Right + 1
+            AddError(pixelData, x + 2, y, stride, bytesPerPixel, w, h, error * 4 / 32);
+            // Left - 2, Down + 1
+            AddError(pixelData, x - 2, y + 1, stride, bytesPerPixel, w, h, error * 2 / 32);
+            // Left - 1, Down + 1
+            AddError(pixelData, x - 1, y + 1, stride, bytesPerPixel, w, h, error * 4 / 32);
+            // Down + 1
+            AddError(pixelData, x, y + 1, stride, bytesPerPixel, w, h, error * 8 / 32);
+            // Right, Down + 1
+            AddError(pixelData, x + 1, y + 1, stride, bytesPerPixel, w, h, error * 4 / 32);
+            // Right + 1, Down + 1
+            AddError(pixelData, x + 2, y + 1, stride, bytesPerPixel, w, h, error * 2 / 32);
+        }
+
+        private void AddError(byte[] pixelData, int x, int y, int stride, int bytesPerPixel, int w, int h, int error)
+        {
+            if (x >= 0 && x < w && y >= 0 && y < h)
+            {
+                int index = y * stride + x * bytesPerPixel;
+                int value = pixelData[index] + error;
+                pixelData[index] = (byte)Math.Max(Math.Min(value, 255), 0);
+            }
+        }
+
+
+
+        private WriteableBitmap StuckiDithering(WriteableBitmap bitmap, int levels)
+        {
+            int w = bitmap.PixelWidth;
+            int h = bitmap.PixelHeight;
+            int bytesPerPixel = (bitmap.Format.BitsPerPixel + 7) / 8;
+            int stride = bitmap.BackBufferStride;
+            byte[] pixelData = new byte[h * stride];
+
+            bitmap.CopyPixels(pixelData, stride, 0);
+
+            for (int y = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    int index = y * stride + x * bytesPerPixel;
+                    byte originalPixel = pixelData[index];
+                    byte newPixel = QuantizeByte(originalPixel, levels);
+                    int error = originalPixel - newPixel;
+                    pixelData[index] = newPixel;
+
+                    // Distribute the error based on the Stucki algorithm
+                    // Note: Similar to the Burkes algorithm, but with different coefficients and more neighbors
+                    if (x + 1 < w)
+                    {
+                        AddError(pixelData, x + 1, y, stride, bytesPerPixel, w, h, error * 8 / 42);
+                    }
+                    if (x + 2 < w)
+                    {
+                        AddError(pixelData, x + 2, y, stride, bytesPerPixel, w, h, error * 4 / 42);
+                    }
+                    if (y + 1 < h)
+                    {
+                        if (x > 1)
+                        {
+                            AddError(pixelData, x - 2, y + 1, stride, bytesPerPixel, w, h, error * 2 / 42);
+                        }
+                        if (x > 0)
+                        {
+                            AddError(pixelData, x - 1, y + 1, stride, bytesPerPixel, w, h, error * 4 / 42);
+                        }
+                        AddError(pixelData, x, y + 1, stride, bytesPerPixel, w, h, error * 8 / 42);
+                        if (x + 1 < w)
+                        {
+                            AddError(pixelData, x + 1, y + 1, stride, bytesPerPixel, w, h, error * 4 / 42);
+                        }
+                        if (x + 2 < w)
+                        {
+                            AddError(pixelData, x + 2, y + 1, stride, bytesPerPixel, w, h, error * 2 / 42);
+                        }
+                    }
+                    if (y + 2 < h)
+                    {
+                        if (x > 1)
+                        {
+                            AddError(pixelData, x - 2, y + 2, stride, bytesPerPixel, w, h, error * 1 / 42);
+                        }
+                        if (x > 0)
+                        {
+                            AddError(pixelData, x - 1, y + 2, stride, bytesPerPixel, w, h, error * 2 / 42);
+                        }
+                        AddError(pixelData, x, y + 2, stride, bytesPerPixel, w, h, error * 4 / 42);
+                        if (x + 1 < w)
+                        {
+                            AddError(pixelData, x + 1, y + 2, stride, bytesPerPixel, w, h, error * 2 / 42);
+                        }
+                        if (x + 2 < w)
+                        {
+                            AddError(pixelData, x - 2, y + 2, stride, bytesPerPixel, w, h, error * 1 / 42);
+                        }
+                    }
+                }
+            }
+
+            var resultBitmap = new WriteableBitmap(w, h, bitmap.DpiX, bitmap.DpiY, bitmap.Format, bitmap.Palette);
+            resultBitmap.WritePixels(new Int32Rect(0, 0, w, h), pixelData, stride, 0);
+            return resultBitmap;
+        }
+
+
+        private WriteableBitmap SierraDithering(WriteableBitmap bitmap, int levels)
+        {
+            int w = bitmap.PixelWidth;
+            int h = bitmap.PixelHeight;
+            int bytesPerPixel = (bitmap.Format.BitsPerPixel + 7) / 8;
+            int stride = bitmap.BackBufferStride;
+            byte[] pixelData = new byte[h * stride];
+
+            bitmap.CopyPixels(pixelData, stride, 0);
+
+            for (int y = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    int index = y * stride + x * bytesPerPixel;
+                    byte originalPixel = pixelData[index];
+                    byte newPixel = QuantizeByte(originalPixel, levels);
+                    int error = originalPixel - newPixel;
+                    pixelData[index] = newPixel;
+
+                    // Distribute the error based on the Stucki algorithm
+                    // Note: Similar to the Burkes algorithm, but with different coefficients and more neighbors
+                    if (x + 1 < w)
+                    {
+                        AddError(pixelData, x + 1, y, stride, bytesPerPixel, w, h, error * 5 / 32);
+                    }
+                    if (x + 2 < w)
+                    {
+                        AddError(pixelData, x + 2, y, stride, bytesPerPixel, w, h, error * 3 / 32);
+                    }
+                    if (y + 1 < h)
+                    {
+                        if (x > 1)
+                        {
+                            AddError(pixelData, x - 2, y + 1, stride, bytesPerPixel, w, h, error * 2 / 32);
+                        }
+                        if (x > 0)
+                        {
+                            AddError(pixelData, x - 1, y + 1, stride, bytesPerPixel, w, h, error * 4 / 32);
+                        }
+                        AddError(pixelData, x, y + 1, stride, bytesPerPixel, w, h, error * 5 / 32);
+                        if (x + 1 < w)
+                        {
+                            AddError(pixelData, x + 1, y + 1, stride, bytesPerPixel, w, h, error * 4 / 32);
+                        }
+                        if (x + 2 < w)
+                        {
+                            AddError(pixelData, x + 2, y + 1, stride, bytesPerPixel, w, h, error * 2 / 32);
+                        }
+                    }
+                    if (y + 2 < h)
+                    {
+  
+                        if (x > 0)
+                        {
+                            AddError(pixelData, x - 1, y + 2, stride, bytesPerPixel, w, h, error * 2 / 32);
+                        }
+                        AddError(pixelData, x, y + 2, stride, bytesPerPixel, w, h, error * 3 / 32);
+                        if (x + 1 < w)
+                        {
+                            AddError(pixelData, x + 1, y + 2, stride, bytesPerPixel, w, h, error * 2 / 32);
+                        }
+  
+                    }
+                }
+            }
+
+            var resultBitmap = new WriteableBitmap(w, h, bitmap.DpiX, bitmap.DpiY, bitmap.Format, bitmap.Palette);
+            resultBitmap.WritePixels(new Int32Rect(0, 0, w, h), pixelData, stride, 0);
+            return resultBitmap;
+        }
+
+
+
+        private WriteableBitmap AtkinsonDithering(WriteableBitmap bitmap, int levels)
+        {
+            int w = bitmap.PixelWidth;
+            int h = bitmap.PixelHeight;
+            int bytesPerPixel = (bitmap.Format.BitsPerPixel + 7) / 8;
+            int stride = bitmap.BackBufferStride;
+            byte[] pixelData = new byte[h * stride];
+
+            bitmap.CopyPixels(pixelData, stride, 0);
+
+            for (int y = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    int index = y * stride + x * bytesPerPixel;
+                    byte originalPixel = pixelData[index];
+                    byte newPixel = QuantizeByte(originalPixel, levels);
+                    int error = originalPixel - newPixel;
+                    pixelData[index] = newPixel;
+
+                    // Distribute the error based on the Stucki algorithm
+                    // Note: Similar to the Burkes algorithm, but with different coefficients and more neighbors
+                    if (x + 1 < w)
+                    {
+                        AddError(pixelData, x + 1, y, stride, bytesPerPixel, w, h, error * 1 / 8);
+                    }
+                    if (x + 2 < w)
+                    {
+                        AddError(pixelData, x + 2, y, stride, bytesPerPixel, w, h, error * 1 / 8);
+                    }
+                    if (y + 1 < h)
+                    {
+
+                        if (x > 0)
+                        {
+                            AddError(pixelData, x - 1, y + 1, stride, bytesPerPixel, w, h, error * 1 / 8);
+                        }
+                        AddError(pixelData, x, y + 1, stride, bytesPerPixel, w, h, error * 1 / 8);
+                        if (x + 1 < w)
+                        {
+                            AddError(pixelData, x + 1, y + 1, stride, bytesPerPixel, w, h, error * 1 / 8);
+                        }
+
+                    }
+                    if (y + 2 < h)
+                    {
+ 
+                        AddError(pixelData, x, y + 2, stride, bytesPerPixel, w, h, error * 1 / 8);
+
+                    }
+                }
+            }
+
+            var resultBitmap = new WriteableBitmap(w, h, bitmap.DpiX, bitmap.DpiY, bitmap.Format, bitmap.Palette);
+            resultBitmap.WritePixels(new Int32Rect(0, 0, w, h), pixelData, stride, 0);
+            return resultBitmap;
+        }
+
+        private void FilterSelectionComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+
+        }
+
+        private void KValueComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+
+        }
+
+
+
+
+        private byte QuantizeToNColors(byte originalColor, int nColors)
+        {
+            // Assume we have a range of color levels equally spaced between 0 and 255.
+            int colorStep = 255 / (nColors - 1);
+            int quantizedLevel = (int)(Math.Round(originalColor / (float)colorStep) * colorStep);
+            return (byte)Math.Max(Math.Min(quantizedLevel, 255), 0);
+        }
+
+        private void ApplyDitheringButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (target.Children.Count > 0 && target.Children[0] is Image)
+            {
+                Image uniformQuantization = target.Children[0] as Image;
+
+                if (uniformQuantization?.Source is BitmapSource originalSource)
+                {
+
+                    int colorsChannel = (int)ColorsSlider.Value;
+                    // Ensuring the image is in a suitable format for quantization
+                    FormatConvertedBitmap formatConvertedBitmap = new FormatConvertedBitmap(originalSource, PixelFormats.Bgra32, null, 0);
+
+                    // Using the format-converted source for quantization
+                    uniformQuantization.Source = NewQuantize(formatConvertedBitmap, colorsChannel,true);
+                }
+            }
+
+        }
+
+        private void ColorsSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            //ColorsTextBlock.Text = ((int)e.NewValue).ToString();
+            if (ColorsTextBlock != null)
+            {
+                ColorsTextBlock.Text = ((int)e.NewValue).ToString();
+            }
+        }
+
+
+
+
+
+    //public Color[] QuantizeToKColors(BitmapSource bitmapSource, int k)
+    //{
+    //    // Convert the BitmapSource to a System.Drawing.Bitmap
+    //    Bitmap bitmap = BitmapFromSource(bitmapSource);
+
+    //    // Create an instance of the color quantizer
+    //    var quantizer = new Accord.Imaging.ColorQuantization.KMeansQuantizer(k);
+
+    //    // Apply the quantization
+    //    Bitmap quantizedImage = quantizer.Quantize(bitmap);
+
+    //    // Extract the palette
+    //    Color[] palette = quantizer.GetPalette();
+
+    //    // Return the palette
+    //    return palette;
+    //}
+
+    //private Bitmap BitmapFromSource(BitmapSource bitmapsource)
+    //{
+    //    Bitmap bitmap;
+    //    using (MemoryStream outStream = new MemoryStream())
+    //    {
+    //        // From BitmapSource to Bitmap
+    //        BitmapEncoder enc = new BmpBitmapEncoder();
+    //        enc.Frames.Add(BitmapFrame.Create(bitmapsource));
+    //        enc.Save(outStream);
+    //        bitmap = new Bitmap(outStream);
+    //    }
+    //    return bitmap;
+    //}
+
+    private WriteableBitmap NewQuantize(BitmapSource source, int k, bool isColorImage)
+        {
+            // Code to convert the source to WriteableBitmap, initialize variables, etc.
+            var writeableBitmap = new WriteableBitmap(source);
+            int w = writeableBitmap.PixelWidth;
+            int h = writeableBitmap.PixelHeight;
+            int bytesPerPixel = (writeableBitmap.Format.BitsPerPixel + 7) / 8;
+            int stride = writeableBitmap.PixelWidth * bytesPerPixel;
+            byte[] pixelData = new byte[writeableBitmap.PixelHeight * stride];
+            writeableBitmap.CopyPixels(pixelData, stride, 0);
+
+            for (int y = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    int index = y * stride + x * bytesPerPixel;
+                    // For color images, we have separate channels to handle
+                    if (isColorImage)
+                    {
+                        // Assuming the format is Bgra32
+                        byte b = pixelData[index];
+                        byte g = pixelData[index + 1];
+                        byte r = pixelData[index + 2];
+
+                        // Quantize each channel separately
+                        byte newB = QuantizeToNColors(b, k);
+                        byte newG = QuantizeToNColors(g, k);
+                        byte newR = QuantizeToNColors(r, k);
+
+
+                        // Apply the new, quantized value to the pixel
+                        int errorB = b - newB;
+                        int errorG = g - newG;
+                        int errorR = r - newR;
+                        int aErr = (errorB + errorG + errorR) / 3;
+
+                        // Distribute the error to neighboring pixels
+                        if (x + 1 < w)
+                        {
+                            pixelData[index + bytesPerPixel] = QuantizeToNColors((byte)Math.Min(255, pixelData[index + bytesPerPixel] + aErr * 7 / 16), k);
+                        }
+
+                        if (y + 1 < h)
+                        {
+                            if (x > 0)
+                            {
+                                pixelData[index + stride - bytesPerPixel] = QuantizeToNColors((byte)Math.Min(255, pixelData[index + stride - bytesPerPixel] + aErr * 3 / 16), k);
+                            }
+
+                            pixelData[index + stride] = QuantizeToNColors((byte)Math.Min(255, pixelData[index + stride] + aErr * 5 / 16), k);
+
+                            if (x + 1 < w)
+                            {
+                                pixelData[index + stride + bytesPerPixel] = QuantizeToNColors((byte)Math.Min(255, pixelData[index + stride + bytesPerPixel] + aErr * 1 / 16), k);
+                            }
+                        }
+
+                    }
+
+                }
+            }
+
+            // Code to create a new WriteableBitmap from the pixelData array and return it.
+            writeableBitmap.WritePixels(new Int32Rect(0, 0, writeableBitmap.PixelWidth, writeableBitmap.PixelHeight), pixelData, stride, 0);
+            return writeableBitmap;
+        }
+
     }
 }
